@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/icon.png" width="160" alt="GearVRMouse app icon">
+</p>
+
 # GearVR Air Mouse 4 macOS
 
 Turn a Samsung Gear VR controller into a wireless mouse for macOS.
