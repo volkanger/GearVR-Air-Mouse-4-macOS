@@ -622,6 +622,43 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
 
 // MARK: - App / menu bar
 
+/// Menu bar glyph: controller silhouette with a touchpad ring; motion waves while pointing is active.
+func menuBarIcon(active: Bool) -> NSImage {
+    let image = NSImage(size: NSSize(width: 19, height: 18), flipped: false) { _ in
+        let head = NSPoint(x: 8, y: 11.5)
+        let body = NSBezierPath(ovalIn: NSRect(x: head.x - 5.2, y: head.y - 5.2, width: 10.4, height: 10.4))
+        body.append(NSBezierPath(roundedRect: NSRect(x: 5, y: 0.8, width: 6, height: 9), xRadius: 3, yRadius: 3))
+        let neck = NSBezierPath()
+        neck.move(to: NSPoint(x: 4.0, y: 8.2))
+        neck.curve(to: NSPoint(x: 5, y: 5.5), controlPoint1: NSPoint(x: 5, y: 7.4), controlPoint2: NSPoint(x: 5, y: 6.5))
+        neck.line(to: NSPoint(x: 11, y: 5.5))
+        neck.curve(to: NSPoint(x: 12.0, y: 8.2), controlPoint1: NSPoint(x: 11, y: 6.5), controlPoint2: NSPoint(x: 11, y: 7.4))
+        neck.close()
+        body.append(neck)
+        NSColor.black.setFill()
+        body.fill()
+        // Touchpad ring
+        NSGraphicsContext.current?.compositingOperation = .clear
+        NSBezierPath(ovalIn: NSRect(x: head.x - 3.6, y: head.y - 3.6, width: 7.2, height: 7.2)).fill()
+        NSGraphicsContext.current?.compositingOperation = .sourceOver
+        NSBezierPath(ovalIn: NSRect(x: head.x - 2.6, y: head.y - 2.6, width: 5.2, height: 5.2)).fill()
+        if active {
+            NSColor.black.setStroke()
+            for radius in [7.2, 9.4] {
+                let arc = NSBezierPath()
+                arc.appendArc(withCenter: head, radius: radius, startAngle: -22, endAngle: 30)
+                arc.lineWidth = 1.5
+                arc.lineCapStyle = .round
+                arc.stroke()
+            }
+        }
+        return true
+    }
+    image.isTemplate = true
+    image.accessibilityDescription = active ? "GearVRMouse, pointing active" : "GearVRMouse"
+    return image
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let link = GearVRLink()
     var statusItem: NSStatusItem!
@@ -633,7 +670,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "VR"
+        statusItem.button?.image = menuBarIcon(active: false)
         let menu = NSMenu()
         menu.addItem(statusLine)
         menu.addItem(.separator())
@@ -669,7 +706,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.gyroItem.state = on ? .on : .off
         }
         link.mapper.onPointingChange = { [weak self] on in
-            self?.statusItem.button?.title = on ? "VR◉" : "VR"
+            self?.statusItem.button?.image = menuBarIcon(active: on)
         }
 
         if !dumpMode {

@@ -32,7 +32,7 @@ SIGN_ID="Apple Development: Your Name (TEAMID)" ./build.sh
    ```bash
    open build/GearVRMouse.app
    ```
-   A **VR** item appears in the menu bar. The app has no Dock icon.
+   A controller icon appears in the menu bar. The app has no Dock icon.
 2. **Allow Bluetooth** when macOS asks.
 3. **Allow Accessibility.** macOS will point you to **System Settings › Privacy & Security › Accessibility**. Turn on **GearVRMouse**, then quit and reopen the app. This permission is what lets the app move the cursor and click.
 4. **Wake the controller** with a short press of **Home**. The app finds and connects to it automatically. You don't need to pair it in System Settings first, and macOS usually doesn't list it there anyway.
@@ -55,7 +55,7 @@ To start the app at login, add `GearVRMouse.app` under **System Settings › Gen
 
 ### Gyro mode (air mouse)
 
-Press **Back** to turn gyro mode on (the menu bar shows **VR◉**), and press it again to turn it off. While it's on:
+Press **Back** to turn gyro mode on (motion waves appear next to the controller icon in the menu bar), and press it again to turn it off. While it's on:
 
 - Point the controller like a TV remote: turn it left/right to move horizontally, tilt it up/down to move vertically.
 - Swipe the touchpad up or down to scroll.

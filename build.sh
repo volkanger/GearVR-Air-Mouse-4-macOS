@@ -5,7 +5,8 @@ cd "$(dirname "$0")"
 
 APP=build/GearVRMouse.app
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
 swiftc -O -o "$APP/Contents/MacOS/GearVRMouse" Sources/main.swift
 
@@ -18,6 +19,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>GearVRMouse</string>
   <key>CFBundleExecutable</key><string>GearVRMouse</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
