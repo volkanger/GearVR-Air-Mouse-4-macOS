@@ -17,12 +17,8 @@ let notifyUUID  = CBUUID(string: "C8C51726-81BC-483B-A052-F7A14EA3D281")
 let writeUUID   = CBUUID(string: "C8C51726-81BC-483B-A052-F7A14EA3D282")
 
 enum Command {
-    static let off: [UInt8]       = [0x00, 0x00]
-    static let sensor: [UInt8]    = [0x01, 0x00]
-    static let keepAlive: [UInt8] = [0x04, 0x00]
-    static let lpmEnable: [UInt8] = [0x06, 0x00]
-    static let lpmDisable: [UInt8] = [0x07, 0x00]
-    static let vrMode: [UInt8]    = [0x08, 0x00]
+    static let sensor: [UInt8]     = [0x01, 0x00]
+    static let lpmDisable: [UInt8] = [0x07, 0x00]   // low-power mode off
 }
 
 let args = CommandLine.arguments
@@ -712,15 +708,6 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 log("  [\(svc.uuid.uuidString)] char \(ch.uuid.uuidString) props=0x\(String(ch.properties.rawValue, radix: 16))")
                 if ch.properties.contains(.read) { p.readValue(for: ch) }
                 p.discoverDescriptors(for: ch)
-                if args.contains("--hid-init"), svc.uuid == CBUUID(string: "1879") {
-                    if ch.uuid == CBUUID(string: "2A4E") { log("  HID: protocol mode = report"); p.writeValue(Data([0x01]), for: ch, type: .withoutResponse) }
-                    if ch.uuid == CBUUID(string: "2A4C") { log("  HID: control point = exit suspend"); p.writeValue(Data([0x01]), for: ch, type: .withoutResponse) }
-                }
-                if args.contains("--subscribe-all"), svc.uuid != CBUUID(string: "FEF5"), svc.uuid != serviceUUID,
-                   ch.properties.contains(.notify) {
-                    log("  subscribing \(ch.uuid.uuidString)")
-                    p.setNotifyValue(true, for: ch)
-                }
             }
         }
         guard svc.uuid == serviceUUID else { return }
@@ -743,46 +730,14 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 self.mapper.releaseAll()
             }
             if silence > 2 { log("No data — resending sensor command"); self.startSensors() }
-            else if args.contains("--keepalive") { self.send(Command.keepAlive) }
-        }
-        if let pollArg = args.first(where: { $0.hasPrefix("--poll=") }) {
-            // Experiment: keep ATT traffic going so macOS keeps a fast connection interval
-            let mode = pollArg.dropFirst("--poll=".count)
-            let ms = Double(args.first(where: { $0.hasPrefix("--pollms=") })?.dropFirst("--pollms=".count) ?? "100") ?? 100
-            let battery = p.services?.first(where: { $0.uuid == CBUUID(string: "180F") })
-            if mode == "read", let battery { p.discoverCharacteristics(nil, for: battery) }
-            Timer.scheduledTimer(withTimeInterval: ms / 1000, repeats: true) { [weak self] t in
-                guard let self, let per = self.peripheral, self.writeChar != nil else { t.invalidate(); return }
-                if mode == "read" {
-                    if let ch = battery?.characteristics?.first { per.readValue(for: ch) }
-                } else {
-                    self.send(Command.keepAlive)
-                }
-            }
-        }
-        if args.contains("--vrmode") {
-            // VR mode stops streaming without frequent keep-alives
-            Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] t in
-                guard let self, self.writeChar != nil else { t.invalidate(); return }
-                self.send(Command.keepAlive)
-            }
         }
     }
 
     func startSensors() {
-        if args.contains("--nocmd") { return }
-        if let seq = args.first(where: { $0.hasPrefix("--seq=") }) {
-            // Experiment: explicit command order, e.g. --seq=vr,sensor
-            let map: [Substring: [UInt8]] = ["sensor": Command.sensor, "vr": Command.vrMode, "lpmoff": Command.lpmDisable,
-                                             "lpmon": Command.lpmEnable, "ka": Command.keepAlive, "off": Command.off]
-            for name in seq.dropFirst("--seq=".count).split(separator: ",") { if let c = map[name] { send(c) } }
-            return
-        }
         // Low-power mode off first: otherwise the controller drops to ~100 ms Bluetooth bursts and loses
         // more than half its packets. Order matters — sending it after sensor mode stops the stream.
         send(Command.lpmDisable)
         send(Command.sensor)
-        if args.contains("--vrmode") { send(Command.vrMode) }
     }
 
     func send(_ cmd: [UInt8]) {
