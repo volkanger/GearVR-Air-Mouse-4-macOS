@@ -6,7 +6,9 @@
 
 Turn a Samsung Gear VR controller into a wireless mouse for macOS.
 
-**GearVRMouse** is a small menu-bar app. It connects to the controller over Bluetooth LE and turns the touchpad, buttons and motion sensors into cursor movement, clicks, drags and scrolling. You can move the cursor by swiping the touchpad, or by pointing the controller like an air mouse. It's a single Swift file with no third-party dependencies.
+**GearVRMouse** is a small menu-bar app. It connects to the controller over Bluetooth LE and turns the touchpad, buttons and motion sensors into cursor movement, clicks, drags and scrolling. Point the controller like an air mouse, swipe the touchpad like a trackpad, or mix both. Seven control modes cover different ways of holding and using it. It's a single Swift file with no third-party dependencies.
+
+A sibling project, [OculusGo Air Mouse 4 macOS](https://github.com/volkanger/OculusGo-Air-Mouse-4-macOS), does the same for the Oculus Go controller, with the same control modes.
 
 ## Requirements
 
@@ -45,45 +47,43 @@ SIGN_ID="Apple Development: Your Name (TEAMID)" ./build.sh
 
 To start the app at login, add `GearVRMouse.app` under **System Settings › General › Login Items**.
 
-## Controls
+## Control modes
 
-| Controller | Action |
-|---|---|
-| Touchpad swipe | Move the cursor |
-| Touchpad tap | Left click |
-| Touchpad press (click) | Left click. Hold and swipe to drag |
-| Trigger | Left click. Hold and swipe the touchpad to drag |
-| Home | Right click |
-| Back | Toggle **gyro mode** |
-| Volume + / − | Scroll up / down (hold to repeat) |
+Choose a mode from **Control Mode** in the menu. With the menu open, ⌘1 to ⌘7 select a mode, and hovering over a mode shows its button map. In every mode, **Volume + / −** scroll up and down, and repeat while held.
 
-### Gyro mode (air mouse)
+| Mode | Gyro points | Touchpad swipe | Touchpad tap | Pad click | Trigger | Back | Home |
+|---|---|---|---|---|---|---|---|
+| **1 · Hold Trigger to Point, Pad Mouse** *(default)* | While trigger held | Moves cursor; scrolls while pointing (up/down reversed); ignored while the pad is pressed | Left click | Tap: left click · Hold + tilt: scroll | Tap: left click · Hold: point | Browser back | Right click |
+| **2 · Home Toggles Gyro** | When toggled on; touching the pad pauses it | Moves cursor | Left click | Left click (hold = drag) | Tap: left click · Hold: grab-scroll | Right click | Gyro on/off |
+| **3 · Hold Trigger to Point** | While trigger held | Scrolls | — | Left click (hold = drag) | Tap: left click · Hold: point | Browser back | Right click |
+| **4 · Touch Pad to Point** | While a finger is on the pad | — | — | Tap: left click · Hold: grab-scroll | Left click (hold = drag) | Browser back | Right click |
+| **5 · Back Toggles Gyro** | When toggled on | Moves cursor; scrolls when gyro on | Left click | Left click (hold = drag) | Left click (hold = drag) | Tap: gyro on/off · Hold: tilt to scroll | Right click |
+| **6 · Touchpad Only** | Never | Moves cursor | Left click | Left click (hold = drag) | Right click (hold = drag) | Scroll up | Scroll down |
+| **7 · Hold Trigger to Point, Press Pad to Scroll** | While trigger held | Scrolls (ignored while the pad is pressed) | — | Hold + move the controller: grab-scroll | Tap: left click · Hold: point | Browser back | Right click |
 
-Press **Back** to turn gyro mode on (motion waves appear next to the controller icon in the menu bar), and press it again to turn it off. While it's on:
+What the terms mean:
 
-- Point the controller like a TV remote: turn it left/right to move horizontally, tilt it up/down to move vertically.
-- Swipe the touchpad up or down to scroll.
-- The trigger and touchpad press still click; Home still right-clicks.
+- **Point:** move the cursor by aiming the controller. Turn it left/right for horizontal movement and tilt it up/down for vertical. It uses gravity from the accelerometer, so it works however you hold the controller. While pointing, motion waves appear next to the controller icon in the menu bar.
+- **Hold:** a press counts as a hold after the **Hold Delay** (default 150 ms). Releasing sooner counts as a tap. The cursor stays still during the delay, so squeezing the trigger won't nudge it. **Back** in mode 5 uses its own 250 ms delay.
+- **Grab-scroll:** the content follows your motion, like dragging the page.
+- **Tilt to scroll:** works like a joystick. Tilt up to scroll toward the top; in mode 5, turn left or right to scroll sideways.
+- **Mode 1, trigger + pad click together:** click-and-drag while pointing with the gyro. Releasing either one drops. Nothing else fires until both are released.
+- **Mode 6, Back / Home:** they scroll like Volume + / −: one step per press, then repeating while held.
+- **Browser back:**
+  - **Chrome, Brave, Firefox, Edge, Arc, Vivaldi and Opera** get the mouse "back" button.
+  - **Safari and other apps** get ⌘←. If a text field has focus, ⌘← moves the text cursor instead of going back.
+  - To choose one method everywhere, set `backMethod` (see [Tuning](#tuning)).
 
-If the cursor drifts on its own, lay the controller flat and choose **Recalibrate Gyro** from the menu.
-
-### Hold trigger for air mouse
-
-Turn on **Hold Trigger for Air Mouse** in the menu to point only while the trigger is held:
-
-- **Hold the trigger** longer than the **Trigger Hold Delay** (default 100 ms) to start pointing. Release it to stop.
-- **Tap the trigger** (release before the delay) to left-click. The cursor stays still during the delay, so squeezing the trigger won't nudge it.
-- Press the touchpad while holding the trigger to drag.
+If the cursor drifts on its own while pointing, lay the controller flat and choose **Recalibrate Gyro** from the menu.
 
 ## Menu
 
 | Item | What it does |
 |---|---|
 | Status line | Connection state |
-| Gyro Mode (⌘G) | Same as the Back button |
-| Hold Trigger for Air Mouse | Enable trigger-hold pointing |
-| Trigger Hold Delay | 100–300 ms |
-| Gyro Speed | 0.5×–4× |
+| Control Mode | Pick one of the seven modes (⌘1–⌘7 while the menu is open) |
+| Hold Delay | 100–300 ms before a trigger or pad press counts as a hold |
+| Gyro Speed | 0.5×–4× pointing speed |
 | Recalibrate Gyro (⌘R) | Re-measure gyro drift. Keep the controller still |
 | Reconnect | Drop and re-establish the Bluetooth connection |
 | Quit (⌘Q) | Quit the app |
@@ -104,13 +104,20 @@ Then choose **Reconnect** in the menu. To restore a default, use `defaults delet
 | `touchAccel` | 0.12 | Touchpad acceleration: faster swipes go further |
 | `touchFilter` | 0.7 | 0–1. Lower values are smoother but less responsive |
 | `maxPacing` | 0.035 | Seconds over which each Bluetooth burst is smoothed |
-| `tapToClick` | true | Tap the touchpad to click (`-bool false` to disable) |
-| `scrollLines` | 3 | Lines per Volume button press |
-| `gyroSpeedX` / `gyroSpeedY` | 0.012 | Base gyro speed per axis |
+| `tapToClick` | true | Tap the touchpad to click, in modes that support it (`-bool false` to disable) |
+| `scrollLines` | 3 | Lines per Volume button press (and Back/Home in mode 6) |
+| `gyroSpeedX` / `gyroSpeedY` | 0.012 | Base gyro speed per axis (the menu's Gyro Speed multiplies this) |
 | `gyroAccel` | 0.0007 | Gyro acceleration: faster turns go further |
 | `gyroDeadzone` | 60 | Ignore tiny motions (reduces jitter and drift) |
-| `gyroSignX` / `gyroSignY` | -1 | Set to `1` to invert an axis |
-| `triggerHoldDelay` | 0.1 | Seconds before a held trigger starts pointing |
+| `gyroSignX` / `gyroSignY` | -1 | Set to `1` to invert a pointing axis |
+| `forwardAxis` | 1 | Sensor axis along the controller (0, 1 or 2). Change it if up/down and left/right are swapped |
+| `scrollSign` | 1 | Set to `-1` to reverse swipe and grab scrolling |
+| `touchScrollSpeed` | 4 | Scroll distance per touchpad movement |
+| `grabScrollSpeed` | 1.5 | Scroll distance per cursor movement while grab-scrolling |
+| `gyroScrollSpeed` | 1.5 | Tilt-to-scroll speed |
+| `gyroScrollSign` | 1 | Set to `-1` to reverse tilt-to-scroll |
+| `backHoldDelay` | 0.25 | Mode 5: seconds before a held Back starts scrolling |
+| `backMethod` | `auto` | Browser back: `auto`, `mouse4` or `cmdLeft` (a string: `defaults write local.gearvrmouse backMethod mouse4`) |
 
 ## Troubleshooting
 
@@ -127,7 +134,7 @@ Then choose **Reconnect** in the menu. To restore a default, use `defaults delet
   2. Reopen the app, turn it back on, then quit and reopen the app again.
 - **The app won't open after a macOS or Xcode update.** Rebuild with `./build.sh`. It pins the minimum macOS version, so a newer toolchain doesn't produce an app your Mac can't run.
 - **The cursor freezes for under a second about every 20 seconds.** This is a known issue, described below.
-- **The gyro moves the wrong way.**
+- **Pointing moves the wrong way.**
   - Flip the axis with `gyroSignX` / `gyroSignY`.
   - If up/down and left/right are swapped, try `forwardAxis` (0, 1 or 2).
 

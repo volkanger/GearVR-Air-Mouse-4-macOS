@@ -33,12 +33,54 @@ func log(_ s: String) {
     print("[\(f.string(from: Date()))] \(s)")
 }
 
-// MARK: - Settings
+// MARK: - Control modes
+
+enum ControlMode: Int, CaseIterable {
+    // Raw values are the menu numbers and are saved in preferences
+    case triggerPointPadMouse = 1, homeToggle, triggerPoint, touchPoint, backToggle, touchpadOnly, triggerPointPadScroll
+
+    var title: String {
+        switch self {
+        case .triggerPointPadMouse: return "1 · Hold Trigger to Point, Pad Mouse"
+        case .homeToggle:   return "2 · Home Toggles Gyro"
+        case .triggerPoint: return "3 · Hold Trigger to Point"
+        case .touchPoint:   return "4 · Touch Pad to Point"
+        case .backToggle:   return "5 · Back Toggles Gyro"
+        case .touchpadOnly: return "6 · Touchpad Only"
+        case .triggerPointPadScroll: return "7 · Hold Trigger to Point, Press Pad to Scroll"
+        }
+    }
+
+    var help: String {
+        let volume = " · Volume ±: scroll"
+        switch self {
+        case .triggerPointPadMouse:
+            return "Hold trigger: point · trigger tap: click · swipe pad: move cursor (scroll while pointing) · tap / pad click: left click · hold pad pressed + tilt: scroll · trigger + pad held: click-and-drag · Back: browser back · Home: right click" + volume
+        case .homeToggle:
+            return "Home: gyro on/off · touching the pad pauses gyro and moves the cursor · trigger tap: click, hold: grab-scroll · pad click: left click · Back: right click" + volume
+        case .triggerPoint:
+            return "Hold trigger: point · trigger tap: click · swipe pad: scroll · pad click: left click · Back: browser back · Home: right click" + volume
+        case .touchPoint:
+            return "Touch pad: point · trigger: click (hold = drag) · pad press tap: click, hold: grab-scroll · Back: browser back · Home: right click" + volume
+        case .backToggle:
+            return "Back tap: gyro on/off, hold: scroll · swipe pad: move (gyro on: scroll) · trigger/pad click: left click · Home: right click" + volume
+        case .touchpadOnly:
+            return "Swipe pad: move · tap / pad click: left click · trigger: right click · Back / Volume +: scroll up · Home / Volume −: scroll down (hold to repeat)"
+        case .triggerPointPadScroll:
+            return "Hold trigger: point · trigger tap: click · swipe pad: scroll · hold pad pressed: move the controller to scroll · Back: browser back · Home: right click" + volume
+        }
+    }
+
+    var hasGyroToggle: Bool { self == .homeToggle || self == .backToggle }
+}
+
+// MARK: - Settings (override with `defaults write local.gearvrmouse <key> -float <value>`)
 
 struct Settings {
     static let d = UserDefaults.standard
     static func double(_ k: String, _ def: Double) -> Double { d.object(forKey: k) == nil ? def : d.double(forKey: k) }
 
+    static var controlMode: ControlMode { ControlMode(rawValue: d.integer(forKey: "controlMode")) ?? .triggerPointPadMouse }
     static var touchSpeed: Double   { double("touchSpeed", 2.5) }    // px per touchpad unit (pad is 0..315)
     static var touchAccel: Double   { double("touchAccel", 0.12) }   // extra gain per unit/packet of finger speed
     static var touchFilter: Double  { double("touchFilter", 0.7) }   // 0..1, lower = smoother touch position
@@ -48,11 +90,16 @@ struct Settings {
     static var gyroAccel: Double    { double("gyroAccel", 0.0007) }  // extra gain per raw unit of rotation speed
     static var gyroMultiplier: Double { double("gyroMultiplier", 1) } // set from the menu
     static var gyroDeadzone: Double { double("gyroDeadzone", 60) }   // raw units after bias removal
-    static var scrollLines: Int32   { Int32(double("scrollLines", 3)) }
-    static var touchScrollDiv: Double { double("touchScrollDiv", 6) } // touch units per scroll line in gyro mode
+    static var scrollLines: Int32   { Int32(double("scrollLines", 3)) } // lines per Volume (or Touchpad Only Back/Home) press
     static var tapToClick: Bool     { d.object(forKey: "tapToClick") == nil ? true : d.bool(forKey: "tapToClick") }
-    static var triggerAirMouse: Bool { d.bool(forKey: "triggerAirMouse") } // hold trigger = air mouse (set from the menu)
-    static var triggerHoldDelay: Double { double("triggerHoldDelay", 0.1) } // seconds before a held trigger starts pointing
+    static var holdDelay: Double    { double("holdDelay", 0.15) }    // trigger / pad press held this long = hold
+    static var backHoldDelay: Double { double("backHoldDelay", 0.25) } // Back Toggles Gyro: Back held this long = scroll
+    static var scrollSign: Double   { double("scrollSign", 1) }      // -1 reverses swipe and grab scrolling
+    static var touchScrollSpeed: Double { double("touchScrollSpeed", 4) } // scroll px per touchpad unit
+    static var grabScrollSpeed: Double  { double("grabScrollSpeed", 1.5) } // scroll px per cursor px while grabbing
+    static var gyroScrollSpeed: Double  { double("gyroScrollSpeed", 1.5) } // Back-hold / pad-hold tilt scroll speed
+    static var gyroScrollSign: Double   { double("gyroScrollSign", 1) }
+    static var backMethod: String   { d.string(forKey: "backMethod") ?? "auto" } // auto | mouse4 | cmdLeft
     // Gyro pointing: yaw = rotation around real-world vertical (from accelerometer gravity),
     // pitch = rotation around the controller's right axis. Flip signs with `defaults write local.gearvrmouse gyroSignX -float 1`.
     static var gyroSignX: Double    { double("gyroSignX", -1) }
@@ -99,7 +146,7 @@ struct Packet {
     }
 }
 
-// MARK: - Mouse output
+// MARK: - Mouse / keyboard output
 
 final class Mouse {
     let src = CGEventSource(stateID: .hidSystemState)
@@ -129,12 +176,12 @@ final class Mouse {
     }
 
     func button(_ btn: CGMouseButton, down: Bool) {
+        if btn == .left ? leftDown == down : rightDown == down { return }
         let p = cursor()
         if down {
             let now = Date()
-            if now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval && hypot(p.x - lastClickPos.x, p.y - lastClickPos.y) < 6 {
-                clickCount += 1
-            } else { clickCount = 1 }
+            let near = hypot(p.x - lastClickPos.x, p.y - lastClickPos.y) < 6
+            clickCount = now.timeIntervalSince(lastClickTime) < NSEvent.doubleClickInterval && near ? clickCount + 1 : 1
             lastClickTime = now; lastClickPos = p
         }
         let type: CGEventType = btn == .left ? (down ? .leftMouseDown : .leftMouseUp) : (down ? .rightMouseDown : .rightMouseUp)
@@ -149,27 +196,78 @@ final class Mouse {
     func scroll(lines: Int32) {
         CGEvent(scrollWheelEvent2Source: src, units: .line, wheelCount: 1, wheel1: lines, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
     }
+
+    /// Smooth pixel scrolling for swipe, grab and tilt scrolling.
+    func scroll(pixelsY: Int32, pixelsX: Int32) {
+        CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: pixelsY, wheel2: pixelsX, wheel3: 0)?.post(tap: .cghidEventTap)
+    }
+
+    /// Browser back. Chromium browsers and Firefox understand the mouse "back" button (no side effects in
+    /// text fields); Safari doesn't, so it gets ⌘← — layout-independent, unlike ⌘[ on non-US keyboards.
+    func browserBack() {
+        let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let mouseBackApps = ["com.google.Chrome", "com.brave.Browser", "org.mozilla.firefox", "company.thebrowser",
+                             "com.microsoft.edgemac", "com.vivaldi.Vivaldi", "com.operasoftware.Opera"]
+        let method = Settings.backMethod
+        if method == "mouse4" || (method == "auto" && mouseBackApps.contains(where: { front.hasPrefix($0) })) {
+            let p = cursor()
+            for type in [CGEventType.otherMouseDown, .otherMouseUp] {
+                let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: CGMouseButton(rawValue: 3)!)
+                e?.setIntegerValueField(.mouseEventButtonNumber, value: 3)
+                e?.post(tap: .cghidEventTap)
+            }
+        } else {
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: 123, keyDown: down)   // left arrow
+                e?.flags = .maskCommand
+                e?.post(tap: .cghidEventTap)
+            }
+        }
+    }
 }
 
 // MARK: - Input mapping
 
+/// Distinguishes a quick tap from a press-and-hold.
+struct HoldTracker {
+    enum Event { case none, tap, holdBegan, holdEnded }
+    private var downAt: Date?
+    private(set) var holding = false
+    var pressed: Bool { downAt != nil || holding }
+
+    mutating func update(down: Bool, delay: Double) -> Event {
+        if down {
+            if downAt == nil && !holding { downAt = Date(); return .none }
+            if let t = downAt, Date().timeIntervalSince(t) >= delay { downAt = nil; holding = true; return .holdBegan }
+            return .none
+        }
+        defer { downAt = nil; holding = false }
+        if holding { return .holdEnded }
+        return downAt != nil ? .tap : .none
+    }
+
+    mutating func reset() { downAt = nil; holding = false }
+}
+
 final class InputMapper {
     let mouse = Mouse()
-    var gyroMode = false { didSet { onGyroModeChange?(gyroMode); onPointingChange?(gyroActive) } }
+    var mode = Settings.controlMode {
+        didSet { releaseAll(); if !mode.hasGyroToggle { gyroMode = false }; log("Control mode: \(mode.title)") }
+    }
+    private var gyroMode = false
     var onPointingChange: ((Bool) -> Void)?
-    // Air mouse while the trigger is held (when enabled in the menu)
-    private(set) var airHeld = false { didSet { if airHeld != oldValue { onPointingChange?(gyroActive) } } }
-    var gyroActive: Bool { gyroMode || airHeld }
-    private var airPressedAt: Date?   // trigger down, waiting to see if it's a tap or a hold
-    var onGyroModeChange: ((Bool) -> Void)?
+    private var pointing = false { didSet { if pointing != oldValue { onPointingChange?(pointing) } } }
 
     private var prev: Packet?
+    private var trigger = HoldTracker(), pad = HoldTracker(), back = HoldTracker()
+    private var padDownAt = Date.distantPast
     private var smoothTouch: (x: Double, y: Double)?
     private var touchFrames = 0
     private var touchStart: (time: Date, x: Int, y: Int, moved: Bool)?
-    private var scrollAcc = 0.0
+    private var scrollAccX = 0.0, scrollAccY = 0.0
     private var volHeldSince: Date?, lastVolRepeat = Date.distantPast
-    private var padPressedAt = Date.distantPast
+    private var tiltScrolling = false
+    private var comboLatch = false       // Pad Mouse: trigger + pad drag in progress (until both released)
 
     // Bluetooth delivers packets in small bursts (typically 2 packets every 30 ms). Motion from each
     // burst is paced out by a 120 Hz timer over the measured gap between bursts, so the cursor glides
@@ -219,6 +317,18 @@ final class InputMapper {
         if mx != 0 || my != 0 { mouse.move(dx: mx, dy: my); fracX -= mx; fracY -= my }
     }
 
+    /// Scroll by a motion in pixels. With scrollSign 1 the content follows the motion (grab / natural).
+    private func scroll(dx: Double, dy: Double) {
+        scrollAccX += dx * Settings.scrollSign; scrollAccY += dy * Settings.scrollSign
+        let sx = scrollAccX.rounded(.towardZero), sy = scrollAccY.rounded(.towardZero)
+        if sx != 0 || sy != 0 {
+            mouse.scroll(pixelsY: Int32(sy), pixelsX: Int32(sx))
+            scrollAccX -= sx; scrollAccY -= sy
+        }
+    }
+
+    private func toggleGyro() { gyroMode.toggle(); log("Gyro mode \(gyroMode ? "ON" : "OFF")") }
+
     // Gyro bias calibration
     private var bias = SIMD3<Double>(repeating: 0)
     private var calibSamples: [SIMD3<Double>] = []
@@ -243,57 +353,113 @@ final class InputMapper {
         var delta = Double(p.deviceTime) - Double(old.deviceTime)
         if delta < 0 { delta += 4_294_967_296 }
         let frames = prev == nil ? 1 : min(max((delta / Self.deviceTicksPerPacket).rounded(), 1), 30)
-        var mdx = 0.0, mdy = 0.0
+        var cursorX = 0.0, cursorY = 0.0
         noteArrival()
         defer {
             prev = p
-            ax.add(mdx, gap: burstGap); ay.add(mdy, gap: burstGap)
+            ax.add(cursorX, gap: burstGap); ay.add(cursorY, gap: burstGap)
         }
         func pressed(_ k: KeyPath<Packet, Bool>) -> Bool { p[keyPath: k] && !old[keyPath: k] }
         func released(_ k: KeyPath<Packet, Bool>) -> Bool { !p[keyPath: k] && old[keyPath: k] }
+        func direct(_ k: KeyPath<Packet, Bool>, _ btn: CGMouseButton) {
+            if pressed(k) { mouse.button(btn, down: true); touchStart?.moved = true }
+            if released(k) { mouse.button(btn, down: false) }
+        }
+        if pressed(\.padClick) { padDownAt = Date() }
+        let touching = p.touching
 
-        // Left button: touchpad click, plus trigger unless it's reserved for the air mouse (hold = drag)
-        let triggerAir = Settings.triggerAirMouse
-        let leftNow = (!triggerAir && p.trigger) || p.padClick, leftOld = (!triggerAir && old.trigger) || old.padClick
-        if leftNow && !leftOld { mouse.button(.left, down: true); touchStart?.moved = true }
-        if !leftNow && leftOld { mouse.button(.left, down: false) }
-        if p.padClick && !old.padClick { padPressedAt = Date() }
+        // ---- Buttons ----
+        var grab = false            // motion scrolls the content instead of moving the cursor
+        var leverScroll = false     // Back Toggles Gyro, Back hold: tilt/turn scrolls like a joystick
+        var gyroPoints = false      // gyro moves the cursor
+        var touchMoves = false      // touchpad moves the cursor (otherwise swipes scroll)
 
-        // Hold trigger: point with the controller once held past the delay; releasing sooner is a left click.
-        // The cursor stays put during the delay so squeezing the trigger doesn't nudge it.
-        if triggerAir {
-            if p.trigger && !old.trigger { airPressedAt = Date() }
-            if p.trigger, let t = airPressedAt, Date().timeIntervalSince(t) >= Settings.triggerHoldDelay {
-                airHeld = true; airPressedAt = nil
+        switch mode {
+        case .homeToggle:
+            if pressed(\.home) { toggleGyro() }
+            direct(\.back, .right)
+            direct(\.padClick, .left)
+            if trigger.update(down: p.trigger, delay: Settings.holdDelay) == .tap { mouse.click(.left) }
+            grab = trigger.holding
+            gyroPoints = gyroMode && !touching
+            touchMoves = true
+
+        case .triggerPoint:
+            direct(\.home, .right)
+            if pressed(\.back) { mouse.browserBack() }
+            direct(\.padClick, .left)
+            if trigger.update(down: p.trigger, delay: Settings.holdDelay) == .tap { mouse.click(.left) }
+            gyroPoints = trigger.holding
+
+        case .touchPoint:
+            direct(\.home, .right)
+            if pressed(\.back) { mouse.browserBack() }
+            direct(\.trigger, .left)
+            if pad.update(down: p.padClick, delay: Settings.holdDelay) == .tap { mouse.click(.left) }
+            grab = pad.holding
+            gyroPoints = touching && !pad.pressed   // cursor holds still while the pad is being pressed
+
+        case .backToggle:
+            direct(\.home, .right)
+            let left = p.trigger || p.padClick, leftOld = old.trigger || old.padClick
+            if left && !leftOld { mouse.button(.left, down: true); touchStart?.moved = true }
+            if !left && leftOld { mouse.button(.left, down: false) }
+            if back.update(down: p.back, delay: Settings.backHoldDelay) == .tap { toggleGyro() }
+            leverScroll = back.holding
+            gyroPoints = gyroMode && !leverScroll
+            touchMoves = !gyroMode && !leverScroll
+
+        case .triggerPointPadScroll:
+            direct(\.home, .right)
+            if pressed(\.back) { mouse.browserBack() }
+            if trigger.update(down: p.trigger, delay: Settings.holdDelay) == .tap { mouse.click(.left) }
+            grab = p.padClick                       // pad pressed: gyro scrolls, swipes are ignored
+            gyroPoints = trigger.holding && !grab
+
+        case .triggerPointPadMouse:
+            direct(\.home, .right)
+            if pressed(\.back) { mouse.browserBack() }
+            let trigEvent = trigger.update(down: p.trigger, delay: Settings.holdDelay)
+            let padEvent = pad.update(down: p.padClick, delay: Settings.holdDelay)
+            // Trigger + pad together: click-and-drag, pointing with the gyro. Releasing either drops;
+            // nothing else fires until both are released.
+            if p.trigger && p.padClick && !comboLatch { comboLatch = true; tiltScrolling = false; mouse.button(.left, down: true) }
+            if comboLatch {
+                if !(p.trigger && p.padClick) { mouse.button(.left, down: false) }
+                if !p.trigger && !p.padClick { comboLatch = false }
+                gyroPoints = p.trigger && p.padClick
+                tiltScrolling = false
+            } else {
+                if trigEvent == .tap { mouse.click(.left) }
+                // Pad click: tap = left click, press and hold = tilt up/down to scroll
+                if padEvent == .tap { mouse.click(.left) }
+                tiltScrolling = pad.holding
+                gyroPoints = trigger.holding && !pad.pressed
+                touchMoves = !trigger.holding && !pad.pressed   // swipes scroll while pointing with the gyro
             }
-            if !p.trigger && old.trigger {
-                if airPressedAt != nil && !p.padClick { mouse.click(.left) }
-                airHeld = false; airPressedAt = nil
-            }
-        } else { airHeld = false; airPressedAt = nil }
-        // Pressing the pad makes the finger wobble; freeze touch motion briefly, then allow click-drag
-        let padWobble = p.padClick && Date().timeIntervalSince(padPressedAt) < 0.15
 
-        // Home: right click (hold = right drag)
-        if pressed(\.home) { mouse.button(.right, down: true) }
-        if released(\.home) { mouse.button(.right, down: false) }
+        case .touchpadOnly:
+            direct(\.padClick, .left)
+            direct(\.trigger, .right)
+            touchMoves = true
+        }
 
-        // Back: toggle gyro mode
-        if pressed(\.back) { gyroMode.toggle(); log("Gyro mode \(gyroMode ? "ON" : "OFF")") }
-
-        // Volume: scroll, with auto-repeat while held
-        let vol: Int32 = p.volUp ? -1 : p.volDown ? 1 : 0   // sign accounts for macOS natural scrolling: + scrolls up
+        // Volume ± scroll in every mode, with auto-repeat while held. Touchpad Only also scrolls with
+        // Back (up) and Home (down).
+        let buttonScroll = mode == .touchpadOnly
+        let vol: Int32 = p.volUp || (buttonScroll && p.back) ? -1 : p.volDown || (buttonScroll && p.home) ? 1 : 0   // sign accounts for macOS natural scrolling: + scrolls up
         if vol != 0 {
             let now = Date()
-            if pressed(\.volUp) || pressed(\.volDown) {
+            if pressed(\.volUp) || pressed(\.volDown) || (buttonScroll && (pressed(\.back) || pressed(\.home))) {
                 mouse.scroll(lines: vol * Settings.scrollLines); volHeldSince = now
             } else if let since = volHeldSince, now.timeIntervalSince(since) > 0.35, now.timeIntervalSince(lastVolRepeat) > 0.06 {
                 mouse.scroll(lines: vol); lastVolRepeat = now
             }
         } else { volHeldSince = nil }
 
-        // Touchpad
-        if p.touching {
+        // ---- Touchpad ----
+        var tdx = 0.0, tdy = 0.0, tspeed = 0.0
+        if touching {
             let rx = Double(p.touchX), ry = Double(p.touchY)
             touchFrames += 1
             if let s = smoothTouch {
@@ -303,39 +469,49 @@ final class InputMapper {
                     let a = Settings.touchFilter
                     let n = (x: s.x + (rx - s.x) * a, y: s.y + (ry - s.y) * a)
                     smoothTouch = n
-                    let dx = n.x - s.x, dy = n.y - s.y
-                    if touchFrames > 2 && !padWobble {           // skip finger-landing jitter and pad-click wobble
-                        if gyroActive {
-                            scrollAcc += dy / Settings.touchScrollDiv
-                            let lines = Int32(scrollAcc)
-                            if lines != 0 { mouse.scroll(lines: -lines); scrollAcc -= Double(lines) }
-                        } else {
-                            // Acceleration: slow swipes are precise, fast swipes cover distance
-                            let v = min(hypot(dx, dy) / frames, 20)   // finger speed per packet interval
-                            let gain = Settings.touchSpeed * (0.5 + v * Settings.touchAccel)
-                            mdx += dx * gain; mdy += dy * gain
-                        }
+                    // Skip finger-landing jitter and the wobble of pressing the pad
+                    let wobble = p.padClick && Date().timeIntervalSince(padDownAt) < 0.15
+                    if touchFrames > 2 && !wobble {
+                        tdx = n.x - s.x; tdy = n.y - s.y
+                        tspeed = min(hypot(tdx, tdy) / frames, 20)   // finger speed per packet interval
                     }
                 }
                 if var ts = touchStart, abs(p.touchX - ts.x) + abs(p.touchY - ts.y) > 12 { ts.moved = true; touchStart = ts }
             } else {
                 smoothTouch = (rx, ry)
-                touchStart = (Date(), p.touchX, p.touchY, false); scrollAcc = 0
+                touchStart = (Date(), p.touchX, p.touchY, false)
             }
         } else if smoothTouch != nil {
-            if Settings.tapToClick, let ts = touchStart, !ts.moved, Date().timeIntervalSince(ts.time) < 0.2, !leftNow {
+            let tapModes: Set<ControlMode> = [.homeToggle, .backToggle, .touchpadOnly, .triggerPointPadMouse]
+            if tapModes.contains(mode), Settings.tapToClick, let ts = touchStart, !ts.moved, Date().timeIntervalSince(ts.time) < 0.2,
+               !p.trigger, !p.padClick, !p.back {
                 mouse.click(.left)
             }
             smoothTouch = nil; touchStart = nil; touchFrames = 0
         }
+        if tdx != 0 || tdy != 0 {
+            if touchMoves {
+                // Acceleration: slow swipes are precise, fast swipes cover distance
+                let gain = Settings.touchSpeed * (0.5 + tspeed * Settings.touchAccel)
+                if grab { scroll(dx: tdx * gain * Settings.grabScrollSpeed, dy: tdy * gain * Settings.grabScrollSpeed) }
+                else { cursorX += tdx * gain; cursorY += tdy * gain }
+            } else if mode != .touchPoint,
+                      !((mode == .triggerPointPadScroll || mode == .triggerPointPadMouse) && p.padClick) {   // pad pressed: ignore swipes
+                // Swipe = natural scroll; Pad Mouse reverses the vertical direction
+                let vSign: Double = mode == .triggerPointPadMouse ? -1 : 1
+                scroll(dx: tdx * Settings.touchScrollSpeed, dy: tdy * Settings.touchScrollSpeed * vSign)
+            }
+        }
 
+        // ---- Gyro ----
         // Gravity estimate (low-pass accelerometer) — points "up" in controller frame
         if simd_length(p.accel) > 100 {
             up = up == nil ? simd_normalize(p.accel) : simd_normalize(simd_mix(up!, simd_normalize(p.accel), SIMD3(repeating: 0.08)))
         }
-
-        // Gyro
-        if gyroActive && !calibrating, let up {
+        // Grabbing moves content with whatever would have moved the cursor (in Touch Pad to Point and Press Pad to Scroll that's the gyro)
+        let gyroGrab = grab && (mode == .touchPoint || mode == .triggerPointPadScroll || gyroPoints)
+        pointing = gyroPoints && !grab && !tiltScrolling
+        if (gyroPoints || gyroGrab || leverScroll || tiltScrolling) && !calibrating, let up {
             let g = p.gyro - bias
             var fwd = SIMD3<Double>(repeating: 0); fwd[Settings.forwardAxis] = 1
             let rightVec = simd_cross(fwd, up)
@@ -350,14 +526,28 @@ final class InputMapper {
             let gain = Settings.gyroMultiplier * (1 + hypot(yaw, pitch) * Settings.gyroAccel) * span
             let gx = yaw * Settings.gyroSignX * Settings.gyroSpeedX * gain
             let gy = pitch * Settings.gyroSignY * Settings.gyroSpeedY * gain
-            mdx += gx; mdy += gy
+            if leverScroll {
+                // Tilt up scrolls toward the top, turn left scrolls toward the left. Multiplying by scrollSign
+                // cancels the one scroll() applies: this lever has its own gyroScrollSign.
+                scroll(dx: -gx * Settings.gyroScrollSpeed * Settings.gyroScrollSign * Settings.scrollSign,
+                       dy: -gy * Settings.gyroScrollSpeed * Settings.gyroScrollSign * Settings.scrollSign)
+            } else if tiltScrolling {
+                // Same lever feel, vertical only: tilt up scrolls toward the top
+                scroll(dx: 0, dy: -gy * Settings.gyroScrollSpeed * Settings.gyroScrollSign * Settings.scrollSign)
+            } else if gyroGrab {
+                scroll(dx: gx * Settings.grabScrollSpeed, dy: gy * Settings.grabScrollSpeed)
+            } else {
+                cursorX += gx; cursorY += gy
+            }
         }
     }
 
     func releaseAll() {
         if mouse.leftDown { mouse.button(.left, down: false) }
         if mouse.rightDown { mouse.button(.right, down: false) }
-        prev = nil; smoothTouch = nil; touchStart = nil; touchFrames = 0; airHeld = false; airPressedAt = nil
+        prev = nil; smoothTouch = nil; touchStart = nil; touchFrames = 0
+        trigger.reset(); pad.reset(); back.reset(); volHeldSince = nil; tiltScrolling = false; comboLatch = false
+        pointing = false
         ax.reset(); ay.reset()
     }
 }
@@ -663,10 +853,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let link = GearVRLink()
     var statusItem: NSStatusItem!
     let statusLine = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
-    let gyroItem = NSMenuItem(title: "Gyro Mode", action: #selector(toggleGyro), keyEquivalent: "g")
-    let speedMenu = NSMenu()
+    let modeMenu = NSMenu()
     let holdDelayMenu = NSMenu()
-    let triggerAirItem = NSMenuItem(title: "Hold Trigger for Air Mouse", action: #selector(toggleTriggerAir), keyEquivalent: "")
+    let speedMenu = NSMenu()
 
     func applicationDidFinishLaunching(_ n: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -674,17 +863,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(statusLine)
         menu.addItem(.separator())
-        gyroItem.target = self; menu.addItem(gyroItem)
-        triggerAirItem.target = self; triggerAirItem.state = Settings.triggerAirMouse ? .on : .off
-        menu.addItem(triggerAirItem)
-        let holdDelayItem = NSMenuItem(title: "Trigger Hold Delay", action: nil, keyEquivalent: "")
+
+        let modeItem = NSMenuItem(title: "Control Mode", action: nil, keyEquivalent: "")
+        modeItem.submenu = modeMenu
+        for m in ControlMode.allCases {
+            let item = NSMenuItem(title: m.title, action: #selector(setMode(_:)), keyEquivalent: "\(m.rawValue)")
+            item.target = self; item.tag = m.rawValue; item.toolTip = m.help
+            modeMenu.addItem(item)
+        }
+        menu.addItem(modeItem)
+        menu.addItem(.separator())
+
+        let holdDelayItem = NSMenuItem(title: "Hold Delay", action: nil, keyEquivalent: "")
         holdDelayItem.submenu = holdDelayMenu
         for ms in [100, 150, 200, 250, 300] {
             let item = NSMenuItem(title: "\(ms) ms", action: #selector(setHoldDelay(_:)), keyEquivalent: "")
             item.target = self; item.representedObject = Double(ms) / 1000
             holdDelayMenu.addItem(item)
         }
-        updateHoldDelayChecks()
         menu.addItem(holdDelayItem)
         let speedItem = NSMenuItem(title: "Gyro Speed", action: nil, keyEquivalent: "")
         speedItem.submenu = speedMenu
@@ -693,21 +889,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             item.target = self; item.representedObject = m
             speedMenu.addItem(item)
         }
-        updateSpeedChecks()
         menu.addItem(speedItem)
         menu.addItem(withTitle: "Recalibrate Gyro", action: #selector(recalibrate), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Reconnect", action: #selector(reconnect), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
+        refreshMenu()
 
         link.onStatus = { [weak self] s in self?.statusLine.title = s }
-        link.mapper.onGyroModeChange = { [weak self] on in
-            self?.gyroItem.state = on ? .on : .off
-        }
         link.mapper.onPointingChange = { [weak self] on in
             self?.statusItem.button?.image = menuBarIcon(active: on)
         }
+        log("Control mode: \(link.mapper.mode.title)")
 
         if !dumpMode {
             let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -719,39 +913,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @objc func toggleGyro() { link.mapper.gyroMode.toggle() }
+    func refreshMenu() {
+        let mode = link.mapper.mode
+        for item in modeMenu.items { item.state = item.tag == mode.rawValue ? .on : .off }
+        for item in holdDelayMenu.items {
+            item.state = abs((item.representedObject as? Double ?? -1) - Settings.holdDelay) < 0.001 ? .on : .off
+        }
+        for item in speedMenu.items {
+            item.state = (item.representedObject as? Double) == Settings.gyroMultiplier ? .on : .off
+        }
+    }
 
-    @objc func toggleTriggerAir() {
-        let on = !Settings.triggerAirMouse
-        Settings.d.set(on, forKey: "triggerAirMouse")
-        triggerAirItem.state = on ? .on : .off
+    @objc func setMode(_ sender: NSMenuItem) {
+        guard let m = ControlMode(rawValue: sender.tag) else { return }
+        Settings.d.set(m.rawValue, forKey: "controlMode")
+        link.mapper.mode = m
+        refreshMenu()
+    }
+
+    @objc func setHoldDelay(_ sender: NSMenuItem) {
+        guard let v = sender.representedObject as? Double else { return }
+        Settings.d.set(v, forKey: "holdDelay")
+        refreshMenu()
     }
 
     @objc func setGyroSpeed(_ sender: NSMenuItem) {
         guard let m = sender.representedObject as? Double else { return }
         Settings.d.set(m, forKey: "gyroMultiplier")
-        updateSpeedChecks()
+        refreshMenu()
     }
 
-    @objc func setHoldDelay(_ sender: NSMenuItem) {
-        guard let v = sender.representedObject as? Double else { return }
-        Settings.d.set(v, forKey: "triggerHoldDelay")
-        updateHoldDelayChecks()
-    }
-
-    func updateHoldDelayChecks() {
-        for item in holdDelayMenu.items {
-            item.state = abs((item.representedObject as? Double ?? -1) - Settings.triggerHoldDelay) < 0.001 ? .on : .off
-        }
-    }
-
-    func updateSpeedChecks() {
-        for item in speedMenu.items {
-            item.state = (item.representedObject as? Double) == Settings.gyroMultiplier ? .on : .off
-        }
-    }
     @objc func recalibrate() { link.mapper.recalibrate() }
     @objc func reconnect() { link.reconnect() }
+
+    func applicationWillTerminate(_ n: Notification) {
+        link.mapper.releaseAll()   // never quit with a mouse button held down
+    }
 }
 
 let app = NSApplication.shared
