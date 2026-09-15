@@ -8,7 +8,9 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
-swiftc -O -o "$APP/Contents/MacOS/GearVRMouse" Sources/main.swift
+# Pin the deployment target to LSMinimumSystemVersion; newer toolchains otherwise default to their own SDK's
+# macOS version and the app won't launch on anything older.
+swiftc -O -target "$(uname -m)-apple-macos12.0" -o "$APP/Contents/MacOS/GearVRMouse" Sources/main.swift
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

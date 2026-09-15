@@ -125,6 +125,7 @@ Then choose **Reconnect** in the menu. To restore a default, use `defaults delet
 - **The controller connects but the cursor doesn't move.** Accessibility isn't granted, or it no longer matches the app. In **Privacy & Security › Accessibility**:
   1. Remove GearVRMouse with **−**.
   2. Reopen the app, turn it back on, then quit and reopen the app again.
+- **The app won't open after a macOS or Xcode update.** Rebuild with `./build.sh`. It pins the minimum macOS version, so a newer toolchain doesn't produce an app your Mac can't run.
 - **The cursor freezes for under a second about every 20 seconds.** This is a known issue, described below.
 - **The gyro moves the wrong way.**
   - Flip the axis with `gyroSignX` / `gyroSignY`.
