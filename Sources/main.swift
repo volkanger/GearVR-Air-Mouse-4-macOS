@@ -565,6 +565,7 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var dumpCount = 0
     private var lastRawTail: String?
     private var manualReconnect = false
+    private var stale = false          // no data for a while; held mouse buttons already released
     private var disconnectedAt: Date?
     private var statGaps: [Double] = [], statTSDeltas: [Int64] = [], statTouchChanges = 0
     private var statStart = Date(), statLastTS: UInt32?, statLastTouch = (0, 0)
@@ -585,9 +586,27 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         }
     }
 
+    // The first controller that streams data is remembered; after that the app only connects to that device,
+    // so another nearby device advertising the same name or service can't take over the mouse.
+    private static let controllerKey = "controllerIdentifier"
+    private var knownController: UUID? { Settings.d.string(forKey: Self.controllerKey).flatMap(UUID.init(uuidString:)) }
+
     func findController() {
         guard central.state == .poweredOn, peripheral == nil else { return }
-        if let p = central.retrieveConnectedPeripherals(withServices: [serviceUUID]).first {
+        let connected = central.retrieveConnectedPeripherals(withServices: [serviceUUID])
+        if let id = knownController {
+            if let p = connected.first(where: { $0.identifier == id }) {
+                status("Found connected controller: \(p.name ?? "?")"); connect(p)
+            } else if let p = central.retrievePeripherals(withIdentifiers: [id]).first {
+                // A pending connection completes as soon as the controller wakes up and comes in range
+                status("Waiting for your controller — press the Home button on it…"); connect(p)
+            } else {
+                status("Scanning for your controller — press the Home button on it…")
+                central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            }
+            return
+        }
+        if let p = connected.first {
             status("Found connected controller: \(p.name ?? "?")"); connect(p); return
         }
         status("Scanning — press the Home button on the controller…")
@@ -598,9 +617,28 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         let name = p.name ?? (ad[CBAdvertisementDataLocalNameKey] as? String) ?? ""
         let services = ad[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
         if dumpMode && !name.isEmpty { log("  seen: \(name) rssi=\(rssi) services=\(services)") }
-        guard name.localizedCaseInsensitiveContains("Gear VR") || services.contains(serviceUUID) else { return }
+        if let id = knownController {
+            guard p.identifier == id else { return }
+        } else {
+            guard name.localizedCaseInsensitiveContains("Gear VR") || services.contains(serviceUUID) else { return }
+        }
         c.stopScan()
         status("Discovered \(name) (RSSI \(rssi))"); connect(p)
+    }
+
+    /// Forget the remembered controller and accept the next Gear VR controller that connects.
+    func forgetController() {
+        Settings.d.removeObject(forKey: Self.controllerKey)
+        log("Forgot remembered controller")
+        central.stopScan()
+        guard let p = peripheral else { findController(); return }
+        if p.state == .connected {
+            manualReconnect = true   // skip the fast same-device reconnect; rescan instead
+            central.cancelPeripheralConnection(p)
+        } else {
+            central.cancelPeripheralConnection(p)
+            reset(retryAfter: 0.5)   // a pending connection may not report a disconnect
+        }
     }
 
     func connect(_ p: CBPeripheral) {
@@ -648,6 +686,7 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     func reset(retryAfter s: Double) {
         mapper.releaseAll()
         watchdog?.invalidate(); watchdog = nil
+        stale = false
         peripheral = nil; writeChar = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + s) { self.findController() }
     }
@@ -697,7 +736,13 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         if !mapper.hasBias { mapper.recalibrate() }
         watchdog = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             guard let self else { return }
-            if Date().timeIntervalSince(self.lastPacket) > 2 { log("No data — resending sensor command"); self.startSensors() }
+            let silence = Date().timeIntervalSince(self.lastPacket)
+            if silence > 3 && !self.stale {
+                // Don't leave a mouse button pressed while the controller is silent
+                self.stale = true
+                self.mapper.releaseAll()
+            }
+            if silence > 2 { log("No data — resending sensor command"); self.startSensors() }
             else if args.contains("--keepalive") { self.send(Command.keepAlive) }
         }
         if let pollArg = args.first(where: { $0.hasPrefix("--poll=") }) {
@@ -794,6 +839,11 @@ final class GearVRLink: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         }
         lastPacket = now
         guard let pkt = Packet(data) else { return }
+        stale = false
+        if knownController == nil {
+            Settings.d.set(p.identifier.uuidString, forKey: Self.controllerKey)
+            log("Remembered controller \(p.name ?? "") — only this device will be used from now on")
+        }
         if dumpMode {
             dumpCount += 1
             let tail = pkt.raw[57...59].map { String(format: "%02x", $0) }.joined(separator: " ")
@@ -892,6 +942,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(speedItem)
         menu.addItem(withTitle: "Recalibrate Gyro", action: #selector(recalibrate), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Reconnect", action: #selector(reconnect), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Forget Controller", action: #selector(forgetController), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
@@ -945,6 +996,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func recalibrate() { link.mapper.recalibrate() }
     @objc func reconnect() { link.reconnect() }
+    @objc func forgetController() { link.forgetController() }
 
     func applicationWillTerminate(_ n: Notification) {
         link.mapper.releaseAll()   // never quit with a mouse button held down

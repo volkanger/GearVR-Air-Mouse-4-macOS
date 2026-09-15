@@ -45,6 +45,8 @@ SIGN_ID="Apple Development: Your Name (TEAMID)" ./build.sh
 5. If macOS shows **"Connection Request from: Gear VR Controller"**, click **Connect**.
 6. **Keep the controller still for about 2 seconds** after it first connects, while the gyro calibrates.
 
+The first controller that sends data is remembered. After that the app connects only to that controller, even if other devices nearby advertise the same name. To use a different controller, choose **Forget Controller** from the menu.
+
 To start the app at login, add `GearVRMouse.app` under **System Settings › General › Login Items**.
 
 ## Control modes
@@ -86,6 +88,7 @@ If the cursor drifts on its own while pointing, lay the controller flat and choo
 | Gyro Speed | 0.5×–4× pointing speed |
 | Recalibrate Gyro (⌘R) | Re-measure gyro drift. Keep the controller still |
 | Reconnect | Drop and re-establish the Bluetooth connection |
+| Forget Controller | Stop trusting the remembered controller and accept the next one that connects |
 | Quit (⌘Q) | Quit the app |
 
 ## Tuning
@@ -129,6 +132,7 @@ Then choose **Reconnect** in the menu. To restore a default, use `defaults delet
   1. In **System Settings › Bluetooth**, find **Gear VR Controller**, click ⓘ and choose **Forget This Device**.
   2. Hold **Home** on the controller until its light cycles colors.
   3. Wait for the app to reconnect, and click **Connect** if macOS asks.
+- **It connected to the wrong controller, or you replaced yours.** Choose **Forget Controller**, then press **Home** on the controller you want to use.
 - **The controller connects but the cursor doesn't move.** Accessibility isn't granted, or it no longer matches the app. In **Privacy & Security › Accessibility**:
   1. Remove GearVRMouse with **−**.
   2. Reopen the app, turn it back on, then quit and reopen the app again.
@@ -141,7 +145,13 @@ Then choose **Reconnect** in the menu. To restore a default, use `defaults delet
 ## Known issues
 
 - **Periodic disconnects.** On macOS the controller drops the Bluetooth link about every 19.5 seconds. It happens whether or not any commands are sent, with or without keep-alives, and even when paired. The app reconnects immediately, so the cursor pauses for roughly 0.6–0.8 s. The likely cause is that the controller asks for faster Bluetooth link timing than macOS will grant. Android apps can request that timing; Mac apps can't. This hasn't been confirmed.
-- **Security note.** The app connects to any nearby device that advertises as "Gear VR Controller". A malicious device in Bluetooth range could pretend to be one and send mouse input. Quit the app when you're not using it if that matters in your environment.
+
+## Security and privacy
+
+- **Accessibility permission:** the app can move the cursor, click and press ⌘← in any app. That's inherent to what it does. Quit it when you're not using it if that matters in your environment.
+- **Trusted controller:** the first controller that sends data is remembered, and only that device is used afterwards. Until a controller is remembered, or after **Forget Controller**, the app accepts any nearby device that advertises as a Gear VR controller.
+- **No stuck buttons:** held mouse buttons are released when the controller disconnects, goes silent for 3 seconds, the control mode changes, or the app quits.
+- **Data stays local:** nothing is sent anywhere. Settings live in the app's preferences (`local.gearvrmouse`).
 
 ## How it works
 
